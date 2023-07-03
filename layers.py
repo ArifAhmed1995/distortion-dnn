@@ -1,11 +1,4 @@
-from network import np, nn, functional, torch
-from utils import tensor_size
-
-import gc
-
-from torch.nn.modules import activation, padding
-from torch.autograd import Variable
-
+from network import nn, torch
 
 class SAAF(nn.Module):
     def __init__(self, break_points, break_range, magnitude):
@@ -40,44 +33,16 @@ class SAAF(nn.Module):
 
         return output
 
-
-class Deconvolution(nn.Module):
-    def __init__(self, filters, kernel_size, conv_layer,
-                 strides=1,
-                 padding='valid'):
-        super(Deconvolution, self).__init__()
-
-        self.device = torch.device("cpu")
-
-        self.filters = filters
-        self.strides = (strides,)
-        self.padding = padding
-        self.input_dim = None
-        self.input_length = None
-
-        self.kernel_size = kernel_size
-        self.conv_layer = conv_layer
-
-    def forward(self, x):
-        gc.collect()
-        input_dim = x.shape[-1]
-        self.kernel_shape = (self.kernel_size, input_dim, self.filters)
-
-        x = torch.unsqueeze(x, -1)
-        x = x.permute(0, 2, 1, 3)
-
-        W = torch.unsqueeze(self.conv_layer.weight, -1)
-
-        W = W.permute(1, 0, 2, 3)
-
-        conv2 = nn.Conv2d(self.filters, 1, self.kernel_size,
-                          padding=self.padding, bias=True, padding_mode='zeros', dtype=None)
-        conv2.weight = nn.Parameter(data=W, requires_grad=True)
-
-        output = conv2(x)
-        output = torch.squeeze(output, 3)
-
-        return output.permute(0, 2, 1)
+class Deconvolution(nn.ConvTranspose1d):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 dilation=1, padding="same", groups=1, bias=True):
+        if padding == "same":
+            padding = max(0, (kernel_size - 2) // 2)
+        super(Deconvolution, self).__init__(in_channels, out_channels, kernel_size,
+                                       stride=1, padding=padding, groups=groups,
+                                       bias=bias, dilation=dilation)
+    def forward(self, inputs):
+        return super(Deconvolution, self).forward(inputs)
 
 
 class Convolution1D_Locally_Connected(nn.Module):
@@ -126,21 +91,11 @@ class Convolution1D_Locally_Connected(nn.Module):
 class BatchMaxPooling1d(nn.Module):
     def __init__(self, kernel_size):
         super(BatchMaxPooling1d, self).__init__()
-
-        self.device = torch.device("cpu")
         self.kernel_size = kernel_size
 
     def forward(self, x):
         # x is a tensor
-        in_shape = list(x.shape)
-        out_shape = in_shape[:-1]
-        out_shape.extend([in_shape[-1]//self.kernel_size])
-
-        output = torch.zeros(out_shape)
-        for i in range(in_shape[0]):
-            output[i] = nn.MaxPool1d(self.kernel_size)(torch.squeeze(x[i], 0))
-
-        return output
+        return nn.MaxPool1d(self.kernel_size, stride=1)(x)
 
 
 class LatentSpace_DNN_LocallyConnected_Dense(nn.Module):
@@ -149,45 +104,22 @@ class LatentSpace_DNN_LocallyConnected_Dense(nn.Module):
                  use_bias=True):
         super(LatentSpace_DNN_LocallyConnected_Dense, self).__init__()
 
-        self.device = torch.device("cpu")
-
         self.units = units
         self.activation = activation
         self.use_bias = use_bias
         self.supports_masking = True
 
+        self.conv_1 = nn.Conv1d(self.units, self.units, self.units, stride=1, padding='same', padding_mode='zeros')
+        self.conv_2 = nn.Conv1d(self.units, self.units, self.units, stride=1, padding='same', padding_mode='zeros')
+
     def forward(self, x):
-        input_shape = list(x.size())
-        input_dim = input_shape[-1]  # 64
-        self.split = input_shape[1]  # 128
-
-        kernels = [nn.Parameter(data=torch.zeros(
-            input_dim, self.units), requires_grad=True) for i in range(self.split)]
-        self.kernel = torch.cat(kernels, -1)
-
-        biases = [nn.Parameter(data=torch.zeros(
-            self.units, ), requires_grad=True) for i in range(self.split)]
-        self.bias = torch.cat(biases, -1)
-
-        split_input = torch.split(x, 1, dim=1)
-        W = torch.split(self.kernel, self.units, dim=1)
-        b = torch.split(self.bias, self.units, dim=0)
-
-        outputs = []
-        for i, j in enumerate(split_input):
-            output = torch.matmul(torch.squeeze(j), W[i]) + b[i]
-            if self.activation is not None:
-                output = self.activation(output)
-            outputs.append(output)
-
-        return_val = torch.cat(outputs, 1)
-        return return_val.view(input_shape[0], self.split, input_dim)
+        return nn.Softplus()(self.conv_2(nn.Softplus()(self.conv_1(x))))
 
 
 class TimeDistributed(nn.Module):
     def __init__(self, layer, batch_first=False, **kwargs):
         super(TimeDistributed, self).__init__()
-        self.layer = layer
+        self.layer = layer.to('cuda')
         self.batch_first = batch_first
         self.kwargs = kwargs
 
@@ -196,7 +128,7 @@ class TimeDistributed(nn.Module):
             in_features = self.kwargs['in_features']
             out_features = self.kwargs['out_features']
             activation = self.kwargs['activation']
-            c_out = self.layer(x, in_features, out_features, activation)
+            c_out = self.layer(x, in_features, out_features, activation).to('cuda')
             return c_out
         return None
 
@@ -205,17 +137,7 @@ class UpSampling1D(nn.Module):
     def __init__(self, size):
         super(UpSampling1D, self).__init__()
         self.size = size
+        self.upsample = nn.Upsample(size=self.size, mode='linear')
 
     def forward(self, x):
-        return nn.Upsample(size=self.size, mode='linear')(x)
-
-
-class Multiply(nn.Module):
-    def __init__(self):
-        super(Multiply, self).__init__()
-
-    def forward(self, tensors):
-        result = torch.ones(tensors[0].size())
-        for t in tensors:
-            result *= t
-        return t
+        return self.upsample(x)

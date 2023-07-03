@@ -8,10 +8,7 @@ Brighton, UK, May 2019.
 
 import os
 
-from torch.nn.modules import loss
-
 from datafetcher import DataFetcher
-
 from network import torch, nn, DistortionNetwork
 
 from utils import DataGenerator
@@ -23,27 +20,35 @@ if __name__ == '__main__':
     window_length = 4096
     filters = 128
     kernel_size = 64
-    learning_rate = 0.0001
-    batch_size = 8
+    learning_rate = 0.00005
+    batch_size = 1
 
     # Get train, test data
-    df = DataFetcher()
+    base_path = os.path.join(os.getcwd(), 'data', 'IDMT-SMT-AUDIO-EFFECTS', 'IDMT-SMT-AUDIO-EFFECTS', 'Gitarre_monophon', 'Samples')
+    df = DataFetcher(nofx_path=os.path.join(base_path, 'NoFX'),
+                fx_path=os.path.join(base_path, 'Distortion'))
+
     X_train, X_test, y_train, y_test = df.get_train_test_data()
 
     # Load into neural network
     distortion_network = DistortionNetwork(
-        window_length, filters, kernel_size, learning_rate)
+        window_length, filters, kernel_size, learning_rate).to('cuda')
 
     # Loss function and Optimizer
     loss_function = nn.L1Loss()  # Mean Absolute Error
-    optimizer = torch.optim.SGD(
-        distortion_network.parameters(), lr=0.001, momentum=0.9)
+    optimizer = torch.optim.Adam([p for p in distortion_network.parameters() if p.requires_grad], lr=learning_rate, betas=(0.9, 0.99))
 
     # Data generator to yield batches to train and test data
     train_generator = DataGenerator(
         X_train, y_train, batch_size=batch_size, window_length=window_length)
     test_generator = DataGenerator(
         X_test, y_test, batch_size=batch_size, window_length=window_length)
+
+    model_path = os.getcwd() + '/distortion_network_model_params.pt'
+    if os.path.exists(model_path):
+        checkpoint = torch.load(model_path)
+        distortion_network.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     for epoch in range(epochs):
         running_loss = 0.0
@@ -57,12 +62,19 @@ if __name__ == '__main__':
             mae_loss.backward()
             optimizer.step()
 
-            div = 10
-            running_loss += 1000 * mae_loss.item()
+            div = 5
+            running_loss += mae_loss.item()
             if i != 0 and i % div == 0:
                 print('[%d, %5d] loss on train data: %.3f' %
-                      (epoch + 1, i + 1, running_loss / 50))
+                      (epoch + 1, i + 1, running_loss))
                 running_loss = 0.0
+        path = os.getcwd() + '/distortion_network_model_params.pt'
+
+        torch.save({
+            'model_state_dict': distortion_network.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+        }, path)
+
 
     print("Finished training....")
 
@@ -78,10 +90,3 @@ if __name__ == '__main__':
             print('[%d, %5d] loss on test data: %.3f' %
                   (epoch + 1, i + 1, running_loss / 50))
             running_loss = 0.0
-
-    path = os.getcwd() + '/distortion_network_model_params.pt'
-
-    torch.save({
-          'model_state_dict': distortion_network.state_dict(),
-          'optimizer_state_dict': optimizer.state_dict(),
-    }, path)

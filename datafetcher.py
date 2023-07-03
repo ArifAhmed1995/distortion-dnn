@@ -19,8 +19,9 @@ def tensor_size(x):
     return list(x.size())
 
 class DataFetcher:
-    def __init__(self, folder='Gitarre monophon'):
-        self.folder = folder
+    def __init__(self, nofx_path, fx_path):
+        self.nofx_path = nofx_path
+        self.fx_path = fx_path
 
         self.wavelist_dict = {}
         self.train_dict = {}
@@ -30,37 +31,38 @@ class DataFetcher:
         self.train_tensor_list = []
         self.test_tensor_list = []
 
-        self.tensor_train_path = os.path.join(
-            'data' + '/' + folder, 'processed_train.hdf5')
-        self.tensor_test_path = os.path.join(
-            'data' + '/' + folder, 'processed_test.hdf5')
-
-        self.device = 'cpu'
+        self.tensor_train_path = os.path.join(os.getcwd(), 'processed_train.hdf5')
+        self.tensor_test_path = os.path.join(os.getcwd(), 'processed_test.hdf5')
+        self.device = 'cuda'
 
     def extract_data(self):
-        guitar_monophone = os.path.join('data' + '/' + self.folder, 'Samples')
-        directory_original = os.path.join(guitar_monophone, 'NoFX')
-        directory_distortion = os.path.join(guitar_monophone, 'Distortion')
-
-        # This works. The note and its corresponding distortions
-        # are according to the indexing via glob.
         wavelist_original = glob.glob(
-            os.path.join(directory_original, '*.wav'))
+            os.path.join(self.nofx_path, '*.wav'))
         wavelist_distortion = glob.glob(
-            os.path.join(directory_distortion, '*.wav'))
+            os.path.join(self.fx_path, '*.wav'))
+        
+        #wavelist_distortion.sort()
+        #wavelist_original.sort()
 
         for index in range(len(wavelist_original)):
+            prefix = wavelist_original[index].split('/')[-1][:9] + '-4411'
+
+            j_index = -1
+            for i, wavfile in enumerate(wavelist_distortion):
+                if prefix in wavfile:
+                    j_index = i
+
             self.wavelist_dict[index] = {
                 'x': wavelist_original[index],
-                'y': wavelist_distortion[index]
+                'y': wavelist_distortion[j_index]
             }
 
         self.num_samples = len(self.wavelist_dict)
 
     def train_test_split(self):
-        split_index = int(0.7 * self.num_samples)
+        split_index = int(0.85 * self.num_samples)
         kv_pairs = [v for k, v in self.wavelist_dict.items()]
-        random.shuffle(kv_pairs)
+        #random.shuffle(kv_pairs)
 
         self.train_list = kv_pairs[:split_index]
         self.test_list = kv_pairs[split_index:]
@@ -68,19 +70,22 @@ class DataFetcher:
     def write_to_hdf5(self, data, subset_type):
         data_path = self.tensor_train_path if subset_type == "train" else self.tensor_test_path
 
-        sr = 16000
+        sr = 44100
         num_samples = len(data)
 
-        if not os.path.exists(data_path):
+        #if not os.path.exists(data_path):
+        if os.path.exists(data_path):
             h5_file = h5py.File(data_path, 'w')
             h5_data = h5_file.create_dataset(subset_type, shape=(
                 2*num_samples, 1 + 2*sr, 1), dtype=np.float32)
 
             for index, audio_pair in enumerate(data):
-                h5_data[2*index] = torch.tensor(librosa.load(
-                    audio_pair['x'], sr=16000)[0]).reshape(1 + 2*sr, 1)
-                h5_data[1 + 2*index] = torch.tensor(librosa.load(
-                    audio_pair['y'], sr=16000)[0]).reshape(1 + 2*sr, 1)
+                y11 = librosa.load(
+                    audio_pair['x'], sr=sr)[0]
+                h5_data[2*index] = torch.FloatTensor(librosa.load(
+                    audio_pair['x'], sr=sr)[0]).reshape(1 + 2*sr, 1)
+                h5_data[1 + 2*index] = torch.FloatTensor(librosa.load(
+                    audio_pair['y'], sr=sr)[0]).reshape(1 + 2*sr, 1)
 
             h5_file.close()
         else:
@@ -115,8 +120,10 @@ class DataFetcher:
 
 
 if __name__ == '__main__':
-    x = DataFetcher()
+    base_path = os.path.join(os.getcwd(), 'data', 'IDMT-SMT-AUDIO-EFFECTS', 'IDMT-SMT-AUDIO-EFFECTS', 'Gitarre_monophon', 'Samples')
+    x = DataFetcher(nofx_path=os.path.join(base_path, 'NoFX'),
+                fx_path=os.path.join(base_path, 'Distortion'))
     x.extract_data()
     x.train_test_split()
     x.write_hdf5_files()
-    x.get_train_test_data()
+    #x.get_train_test_data()
