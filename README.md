@@ -4,36 +4,16 @@ Implements a Deep Neural Network detailed in the paper with the above title by R
 
 The details of the paper are in the docstring of `main.py`.
 
-The network is expensive to train without a relatively powerful GPU. Colab Free GPU mode does train faster
-than most common consumer GPUs, but Colab Pro might train much faster. The notebook has modified code to specifically run on a GPU.
+The `running_loss` is indicative of the sum of `mean absolute error` per `10` batches
+after which it resets to zero. The default learning rate is for the monotone case, where a mapping from nofx to distortion effect is learned.
 
-Personally I have trained upto 100 epochs on Colab Free GPU mode, saving the model and optimizer states
-regularly. Have witnessed a gradual decrease of `running_loss` so the model does seem to train and learn
-the distortion audio.
-
-The `running_loss` is indicative of the sum of  `mean absolute error` per `10` batches
-after which it resets to zero.
-
-Format: `[epoch, current_batch_index] loss: running_loss`
-
-```
-[1,   111] loss: 10.856
-[1,   121] loss: 11.123
-[1,   131] loss: 11.276
-[1,   141] loss: 11.735
-[1,   151] loss: 11.537
-[1,   161] loss: 11.192
-```
-100 epochs later
-```
-[100,   331] loss: 9.823
-[100,   321] loss: 10.130
-[100,   351] loss: 10.900
-[100,   361] loss: 10.199
-[100,   371] loss: 9.910
-[100,   381] loss: 10.255
-```
+The `master` branch has the architecture as implemented in the paper, but the training time per step is quite long. If some simplifications are done in the
+network then train time is much faster. Personally I do not think the complicated DNN-SAAF layer is required and we get good results for the monotone case without it.
 
 The train and test data are meant to be in `HDF5` format. You can generate them by running `datafetcher.py`
-after downloading the wav files from [this site](https://www.idmt.fraunhofer.de/en/business_units/m2d/smt/audio_effects.html). For some reason, it seems to be blocked in India, so please
-use a VPN.
+after downloading the wav files from [this site](https://www.idmt.fraunhofer.de/en/business_units/m2d/smt/audio_effects.html).
+Put the files into a folder called `data` in the main directory.
+
+The training code is in `main.py` and will use this HDF5 data.
+
+The inference code is in `inference.py`. Checkpoint for the guitar monotones: [Monotone Checkpoint](https://drive.google.com/file/d/1EkhbNNBtTkQV0UoTvqYa2M5n9F87HtlP/view?usp=sharing)
